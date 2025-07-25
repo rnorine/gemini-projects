@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Code Pusher</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .form-input {
+            transition: all 0.2s ease-in-out;
+        }
+        .btn {
+            transition: all 0.2s ease-in-out;
+        }
+        .loader {
+            border-top-color: #4f46e5;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto p-4 sm:p-8 max-w-2xl">
+        <div class="bg-white p-8 rounded-2xl shadow-lg">
+            <header class="text-center mb-8">
+                <h1 class="text-3xl sm:text-4xl font-bold text-gray-900">GitHub Code Pusher</h1>
+                <p class="text-gray-600 mt-2">Paste your code and push it directly to a GitHub repository.</p>
+            </header>
+
+            <!-- Instructions -->
+            <div class="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-lg mb-8">
+                <h2 class="font-bold text-blue-800">How to Use</h2>
+                <ol class="list-decimal list-inside mt-2 text-blue-700 space-y-2">
+                    <li>
+                        Create a <a href="https://github.com/settings/tokens/new?scopes=repo" target="_blank" class="underline hover:text-blue-600">Personal Access Token</a> on GitHub with the `repo` scope.
+                    </li>
+                    <li>
+                        Fill in all the fields below. The repository URL should be in the format `https://github.com/username/repo-name`.
+                    </li>
+                    <li>The file will be created or overwritten in the `main` branch.</li>
+                </ol>
+            </div>
+
+            <!-- Form -->
+            <form id="github-form" class="space-y-6">
+                <div>
+                    <label for="token" class="block text-sm font-medium text-gray-700 mb-1">GitHub Personal Access Token</label>
+                    <input type="password" id="token" class="form-input w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="ghp_..." required>
+                </div>
+
+                <div>
+                    <label for="repo" class="block text-sm font-medium text-gray-700 mb-1">Repository URL</label>
+                    <input type="url" id="repo" class="form-input w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="https://github.com/your-username/your-repo" required>
+                </div>
+
+                <div>
+                    <label for="filename" class="block text-sm font-medium text-gray-700 mb-1">Filename (including path if needed)</label>
+                    <input type="text" id="filename" class="form-input w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="e.g., index.html or src/app.js" required>
+                </div>
+
+                <div>
+                    <label for="code" class="block text-sm font-medium text-gray-700 mb-1">Code</label>
+                    <textarea id="code" rows="12" class="form-input w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 font-mono text-sm" placeholder="Paste your code here..." required></textarea>
+                </div>
+
+                <div>
+                    <label for="commit-message" class="block text-sm font-medium text-gray-700 mb-1">Commit Message</label>
+                    <input type="text" id="commit-message" class="form-input w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" value="feat: Add new file via Code Pusher" required>
+                </div>
+
+                <button type="submit" id="submit-btn" class="btn w-full bg-indigo-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 flex items-center justify-center">
+                    <span id="btn-text">Push to GitHub</span>
+                    <div id="loader" class="loader h-5 w-5 rounded-full border-2 border-gray-200 hidden ml-3"></div>
+                </button>
+            </form>
+
+            <!-- Message Area -->
+            <div id="message-box" class="mt-6 text-center p-4 rounded-lg hidden"></div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('github-form');
+        const submitBtn = document.getElementById('submit-btn');
+        const btnText = document.getElementById('btn-text');
+        const loader = document.getElementById('loader');
+        const messageBox = document.getElementById('message-box');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            // Get form values
+            const token = document.getElementById('token').value.trim();
+            const repoUrl = document.getElementById('repo').value.trim();
+            const filename = document.getElementById('filename').value.trim();
+            const codeContent = document.getElementById('code').value;
+            const commitMessage = document.getElementById('commit-message').value.trim();
+
+            // Basic validation
+            if (!token || !repoUrl || !filename || !codeContent || !commitMessage) {
+                showMessage('Please fill in all fields.', 'error');
+                return;
+            }
+
+            // Parse repo owner and name from URL
+            let owner, repo;
+            try {
+                const url = new URL(repoUrl);
+                [owner, repo] = url.pathname.substring(1).split('/');
+                if (!owner || !repo) throw new Error();
+            } catch (error) {
+                showMessage('Invalid Repository URL format.', 'error');
+                return;
+            }
+            
+            setLoading(true);
+
+            try {
+                const branch = 'main'; // Or 'master', depending on the default branch
+                
+                // GitHub API URL for creating/updating a file
+                const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filename}`;
+
+                // 1. Check if the file already exists to get its SHA
+                let sha = undefined;
+                try {
+                    const existingFileResponse = await fetch(apiUrl, {
+                        headers: {
+                            'Authorization': `token ${token}`,
+                            'Accept': 'application/vnd.github.v3+json'
+                        }
+                    });
+                    if (existingFileResponse.ok) {
+                        const fileData = await existingFileResponse.json();
+                        sha = fileData.sha;
+                    }
+                } catch (error) {
+                    // File might not exist, which is fine. We'll create it.
+                    console.log("Could not fetch existing file, assuming it's new.");
+                }
+
+                // 2. Create or update the file
+                const payload = {
+                    message: commitMessage,
+                    content: btoa(unescape(encodeURIComponent(codeContent))), // Base64 encode the content
+                    branch: branch,
+                    sha: sha // Include SHA if updating an existing file
+                };
+
+                const response = await fetch(apiUrl, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    const commitUrl = result.content.html_url;
+                    showMessage(`Successfully pushed to ${repo}! <a href="${commitUrl}" target="_blank" class="underline">View file</a>`, 'success');
+                } else {
+                    throw new Error(result.message || 'An unknown error occurred.');
+                }
+
+            } catch (error) {
+                console.error('GitHub API Error:', error);
+                showMessage(`Error: ${error.message}`, 'error');
+            } finally {
+                setLoading(false);
+            }
+        });
+
+        function setLoading(isLoading) {
+            if (isLoading) {
+                submitBtn.disabled = true;
+                btnText.textContent = 'Pushing...';
+                loader.classList.remove('hidden');
+            } else {
+                submitBtn.disabled = false;
+                btnText.textContent = 'Push to GitHub';
+                loader.classList.add('hidden');
+            }
+        }
+
+        function showMessage(message, type) {
+            messageBox.innerHTML = message;
+            messageBox.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800');
+            if (type === 'success') {
+                messageBox.classList.add('bg-green-100', 'text-green-800');
+            } else {
+                messageBox.classList.add('bg-red-100', 'text-red-800');
+            }
+        }
+    </script>
+</body>
+</html>
